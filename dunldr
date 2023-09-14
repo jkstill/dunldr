@@ -12,21 +12,21 @@ jared still
 =cut
 
 use warnings;
+use strict;
 use FileHandle;
 use DBI;
-use strict;
 use File::Path;
 use IO::File;
 use Data::Dumper;
 
 use Getopt::Long;
 
-our %optctl = ();
-our %bincol = ();
-our %hexcols = ();
+my %bincol = ();
+my %hexcols = ();
+my $dumpfileSuffix='.csv';
 
-unless ( 
-	Getopt::Long::GetOptions( \%optctl, 
+my %optctl = ();
+Getopt::Long::GetOptions( \%optctl, 
 		"database=s",
 		"username=s",
 		"password=s",
@@ -39,16 +39,17 @@ unless (
 		"rowlimit=i",
 		"table=s@",
 		"bincol=s" => \%bincol,
+		"filesuffix=s" => \$dumpfileSuffix,
 		"sysdba!",
 		"sysoper!",
 		"z","h","help"
-	)
-) { Usage(1); }
+) or die Usage(1);
 
 for my $table ( keys %bincol ) {
 	my @bincols = split(/\,/,$bincol{$table});
 	$hexcols{uc($table)} = \@bincols;
 }
+
 
 #print Dumper(\%optctl);
 #print Dumper(\%hexcols);
@@ -117,7 +118,7 @@ if ( $optctl{dateformat} ) {
 	$dbh->do(qq{alter session set nls_date_format = '$optctl{dateformat}'} );
 }
 
-my $tableHash = new Tables($dbh, \%optctl);
+my $tableHash = new Tables($dbh, \%optctl, $dumpfileSuffix);
 
 #print "tables: ", join(':', keys %{$tableHash}), "\n";
 #for my $table (  keys %{$tableHash} ){
@@ -188,7 +189,7 @@ for my $table (  keys %{$tableHash} ){
 }
 
 
-$sth->finish;
+#$sth->finish;
 $dbh->disconnect;
 
 sub Usage {
@@ -228,6 +229,8 @@ usage:
    -schemadump      dump entire schema of <owner>
                     will ignore -table settings
 
+   -filesuffix      defaults to '.csv'
+
    -rowlimit        limit number of rows returned
 
    -longlen         if longs are in the table, set this
@@ -250,6 +253,7 @@ usage:
    -owner scott \
    -dateformat 'mm/dd/yyyy' \
    -header \
+   -filesuffix '.data' \
    -schemadump \
    -bincol xml_data=payload,header,authorization \
    -bincol app_notes=text
@@ -263,13 +267,15 @@ usage:
 
 package Tables;
 
+use Data::Dumper;
+
 sub new {
 
 	my $pkg = shift;
 	my $class = ref($pkg) || $pkg;
 
-	my ( $dbh, $optionHash ) = @_;
-
+	my ( $dbh, $optionHash, $fileSuffix ) = @_;
+	
 	my $tableHash;
 	if ( grep(/^SCHEMADUMP$/, @{$optionHash->{table}} ) ) {
 		# get all tables of owner
@@ -284,9 +290,9 @@ sub new {
 		while( my $ary = $sth->fetchrow_arrayref ) {
 			push(@tableArray, $ary->[0]);
 		}
-		$tableHash = setTables(\@tableArray);
+		$tableHash = setTables(\@tableArray,$fileSuffix);
 	} else {
-		$tableHash = setTables(\@{$optionHash->{table}});
+		$tableHash = setTables(\@{$optionHash->{table}},$fileSuffix);
 	}
 
 	bless $tableHash, $class;
@@ -305,12 +311,12 @@ sub new {
 
 
 sub setTables {
-	my ($tableArray) = shift;
+	my ($tableArray,$fileSuffix) = @_;
 
 	my %tables = map(
 		split(/:/, $_), 
 		map( 
-			$_.':'.lc($_).'.txt', 
+			$_.':'.lc($_).$fileSuffix, 
 			split(
 				/:/,
 				uc(join(':',@{$tableArray}))
