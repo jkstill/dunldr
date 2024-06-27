@@ -24,6 +24,10 @@ use Getopt::Long;
 my %bincol = ();
 my %hexcols = ();
 my $dumpfileSuffix='.csv';
+my $recordPrefix=q{"};
+my $recordSuffix=q{"};
+my $fieldDelimiter='","';
+my $recordDelimiter="\n";
 
 my %optctl = ();
 Getopt::Long::GetOptions( \%optctl, 
@@ -39,7 +43,11 @@ Getopt::Long::GetOptions( \%optctl,
 		"rowlimit=i",
 		"table=s@",
 		"bincol=s" => \%bincol,
-		"filesuffix=s" => \$dumpfileSuffix,
+		"file-suffix=s" => \$dumpfileSuffix,
+		"record-prefix=s" => \$recordPrefix,
+		"record-suffix=s" => \$recordSuffix,
+		"field-delimiter=s" => \$fieldDelimiter,
+		"record-delimiter=s" => \$recordDelimiter,
 		"sysdba!",
 		"sysoper!",
 		"z","h","help"
@@ -50,6 +58,9 @@ for my $table ( keys %bincol ) {
 	$hexcols{uc($table)} = \@bincols;
 }
 
+
+if ( $recordPrefix eq 'NA' ) { $recordPrefix = ''; }
+if ( $recordSuffix eq 'NA' ) { $recordSuffix = ''; }
 
 #print Dumper(\%optctl);
 #print Dumper(\%hexcols);
@@ -154,7 +165,7 @@ for my $table (  keys %{$tableHash} ){
 	open(DUMP, "+> $dumpFile") || die "could not create file $dumpFile - $!\n";
 
 	if ( $optctl{header} ) {
-		print DUMP join(',',@columns),"\n";
+		print DUMP $recordPrefix . join($fieldDelimiter,@columns) . $recordSuffix . $recordDelimiter;
 	}
 
 	$sth->execute;
@@ -181,7 +192,7 @@ for my $table (  keys %{$tableHash} ){
 				$ary->[$colOrder{uc($hexdumpcol)}] = uc(unpack("H*",$ary->[$colOrder{uc($hexdumpcol)}]));
 			}
 		}
-		print DUMP q{"} . join(q{","},@{$ary}) . qq{"\n};
+		print DUMP  $recordPrefix . join(qq{$fieldDelimiter},@{$ary}) . $recordSuffix . qq{$recordDelimiter};
 		#print "ROW: " . q{'} . join(q{','},@{$ary}) . qq{'\n};
 	}
 	use warnings;
@@ -202,62 +213,88 @@ dunldr - data unloader for Oracle
 
 usage:
 
-   dunldr -database <database> -username <userid> -password <password> \
-     -directory <data unload directory> \
-     -header|noheader \
-     -owner <schema owner> \
-     -table <table1,table2,table3,...)
+   dunldr --database <database> --username <userid> --password <password> \
+     --directory <data unload directory> \
+     --header|noheader \
+     --owner <schema owner> \
+     --table <table1,table2,table3,...)
 
 
-   -database        database name
+   --database           database name
 
-   -username        user to login as
+   --username           user to login as
 
-   -password        password for login user
+   --password           password for login user
 
-   -owner           owner of tables to dump
+   --owner              owner of tables to dump
 
-   -directory       directory to unload data into
-                    will default to <owner>.dump 
+   --directory          directory to unload data into
+                        will default to <owner>.dump 
 
-   -dateformat      Oracle NLS date format - optional
-   -header|noheader should first line include column names?
+   --dateformat         Oracle NLS date format - optional
+   --header             first line is column names
+   --noheader           no column names
 
-   -table           table to dump.  may be repeated as many
-                    times as necessary.
 
-   -schemadump      dump entire schema of <owner>
-                    will ignore -table settings
+   --table              table to dump.  may be repeated as many
+                        times as necessary.
 
-   -filesuffix      defaults to '.csv'
+   --schemadump         dump entire schema of <owner>
+                        will ignore --table settings
 
-   -rowlimit        limit number of rows returned
+   --file suffix        defaults to '.csv'
 
-   -longlen         if longs are in the table, set this
-                    to the maximum length you want.
-                    defaults to 65535
+   --rowlimit           limit number of rows returned
 
-   -bincol          use to specify columns that should be dumped
-                    in hex format.  columns with binary data tend
-                    to cause problems in text dumps.
-                    e.g. -bincol <table_name>=<column_name,column_name,...>
+   --longlen            if longs are in the table, set this
+                        to the maximum length you want.
+                        defaults to 65535
 
-   dunldr -database orcl -username system -password manager \
-   -owner scott -directory scott.tables \
-   -header \
-   -table emp \
-   -table dept \
-   -table sales
+   --bincol             use to specify columns that should be dumped
+                        in hex format.  columns with binary data tend
+                        to cause problems in text dumps.
+                        e.g. --bincol <table_name>=<column_name,column_name,...>
 
-   dunldr -database orcl -username system -password manager \
-   -owner scott \
-   -dateformat 'mm/dd/yyyy' \
-   -header \
-   -filesuffix '.data' \
-   -schemadump \
-   -bincol xml_data=payload,header,authorization \
-   -bincol app_notes=text
+   --record-prefix      string at beginning of record
+                        default: '"' - use NA for empty string
 
+   --record-suffix      string at end of record
+                        default: '"' - use NA for empty string
+
+   --field-delimiter    string that delimits end of field
+                        default: '","'
+
+   --record-delimiter   string that delimits end of record
+                        default: "\n"
+
+   dunldr --database orcl --username system --password manager \
+     --owner scott --directory scott.tables \
+     --header \
+     --table emp \
+     --table dept \
+     --table sales
+
+   dunldr --database orcl --username system --password manager \
+     --owner scott \
+     --dateformat 'yyyy-mm-dd' \
+     --header \
+     --file--suffix '.data' \
+     --schemadump \
+     --bincol xml_data=payload,header,authorization \
+     --bincol app_notes=text
+     --record-prefix 'NA' \
+     --record-suffix 'NA' \
+     --field-delimiter '<EOFD>' \
+     --record-delimiter '<EORD>'
+
+   dunldr --database orcl --username system --password manager \
+     --owner scott \
+     --dateformat 'yyyy-mm-dd hh24:mi:ss' \
+     --header \
+     --file--suffix '.data' \
+     --schemadump \
+     --bincol xml_data=payload,header,authorization \
+     --bincol app_notes=text
 
 };
 
