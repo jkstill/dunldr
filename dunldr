@@ -28,6 +28,8 @@ my $recordPrefix=q{"};
 my $recordSuffix=q{"};
 my $fieldDelimiter='","';
 my $recordDelimiter="\n";
+my $loadAsCLOB = 0;
+my $loadDirect = 0;
 
 my %optctl = ();
 Getopt::Long::GetOptions( \%optctl, 
@@ -43,6 +45,8 @@ Getopt::Long::GetOptions( \%optctl,
 		"rowlimit=i",
 		"table=s@",
 		"bincol=s" => \%bincol,
+		"load-as-clob!", \$loadAsCLOB,
+		"load-direct!", \$loadDirect,
 		"file-suffix=s" => \$dumpfileSuffix,
 		"record-prefix=s" => \$recordPrefix,
 		"record-suffix=s" => \$recordSuffix,
@@ -178,8 +182,15 @@ for my $table (  keys %{$tableHash} ){
 		DIRECTORY => $optctl{directory},
 		SCHEMA => $optctl{owner},
 		HEXCOLS => \@{$hexcols{$table}},
-		COLORDER => \%colOrder
+		COLORDER => \%colOrder,
+		RECSEP => $recordDelimiter,
+		FIELDSEP => $fieldDelimiter,
+		LONGLEN => $optctl{longlen},
+		LOADASCLOB => $loadAsCLOB ,
+		LOADDIRECT => $loadDirect
 	);
+
+	print "LOADASCLOB: $loadAsCLOB\n";
 
 	# turn warnings off here so that warnings are not
 	# reported for null columns when printed
@@ -242,7 +253,7 @@ usage:
    --schemadump         dump entire schema of <owner>
                         will ignore --table settings
 
-   --file suffix        defaults to '.csv'
+   --file-suffix        defaults to '.csv'
 
    --rowlimit           limit number of rows returned
 
@@ -254,6 +265,10 @@ usage:
                         in hex format.  columns with binary data tend
                         to cause problems in text dumps.
                         e.g. --bincol <table_name>=<column_name,column_name,...>
+
+   --load-as-clob       load hex columns as CLOBs
+
+   --load-direct        load binary columns with direct mode
 
    --record-prefix      string at beginning of record
                         default: '"' - use NA for empty string
@@ -291,14 +306,14 @@ usage:
      --owner scott \
      --dateformat 'yyyy-mm-dd hh24:mi:ss' \
      --header \
-     --file--suffix '.data' \
+     --file-suffix '.data' \
      --schemadump \
      --bincol xml_data=payload,header,authorization \
      --bincol app_notes=text
 
 };
 
-	exit $exitCode ? $exitCode : 0;
+	exit ($exitCode ? $exitCode : 0);
 }
 
 
@@ -379,19 +394,53 @@ sub createCtl {
 
 	if ( $args{HEXCOLS} ) {
 		for my $hexdumpcol ( @{$args{HEXCOLS}} ) {
+
+			my $loadLine = '';
+			my $conversionFunction = '';
+
+			if ( $args{LOADDIRECT} ) {
+				$conversionFunction = '';
+			} else {
+				$conversionFunction = qq{ "HEXTORAW(:$columns[$colOrder{uc($hexdumpcol)}])"};
+			}
+
+			if ( $args{LOADASCLOB} ) {
+				$loadLine = qq{ CHAR($args{LONGLEN}) };
+			} else {
+				$loadLine = qq{ CHAR($args{LONGLEN}) $conversionFunction};
+			}
+
 			$columns[$colOrder{uc($hexdumpcol)}] = 
-				$columns[$colOrder{uc($hexdumpcol)}] .
-				qq{ "hex_to_raw(:$columns[$colOrder{uc($hexdumpcol)}])"};
+				$columns[$colOrder{uc($hexdumpcol)}] . $loadLine
 		}
 	}
 
 	my $ctlFile = $args{DIRECTORY}. '/' . lc($args{TABLE}) . '.ctl';
 	my $ctlFh = new IO::File();
 	$ctlFh->open("> $ctlFile") || die "cannot create file $ctlFile - $!\n";
+
+	if ($loadDirect) {
+		$ctlFh->print("OPTIONS (DIRECT=TRUE)\n");
+	}
+
 	$ctlFh->print("load data\n");
 	$ctlFh->print("infile '$args{DUMPFILE}'\n");
+
+	if ( $args{RECSEP} ne "\n" ) {
+		$ctlFh->print(qq{   "str '$args{RECSEP}'"\n});
+	}
+
+	
 	$ctlFh->print("into table $args{TABLE}\n");
-	$ctlFh->print(q{fields terminated by ',' optionally enclosed by '"'}. "\n");
+
+	# fields terminated by '<EOFD>'
+
+	if ( $args{FIELDSEP} ne '","' ) {
+		$ctlFh->print(qq{fields terminated by '$args{FIELDSEP}'\n});
+	} else {
+		$ctlFh->print(q{fields terminated by ',' optionally enclosed by '"'}. "\n");
+	}
+
 	$ctlFh->print("(\n");
 	$ctlFh->print( "\t" . join(",\n\t",@columns) . "\n");
 	$ctlFh->print(")\n");
