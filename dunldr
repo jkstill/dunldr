@@ -31,6 +31,7 @@ my $fieldDelimiter='","';
 my $recordDelimiter="\n";
 my $loadAsCLOB = 0;
 my $loadDirect = 0;
+my $getHexConverionImplemtation = 0;
 
 my %optctl = ();
 Getopt::Long::GetOptions( \%optctl, 
@@ -45,6 +46,7 @@ Getopt::Long::GetOptions( \%optctl,
 		"longlen=i",
 		"rowlimit=i",
 		"table=s@",
+		"show-simd!", \$getHexConverionImplemtation,
 		"bincol=s" => \%bincol,
 		"load-as-clob!", \$loadAsCLOB,
 		"load-direct!", \$loadDirect,
@@ -57,6 +59,12 @@ Getopt::Long::GetOptions( \%optctl,
 		"sysoper!",
 		"z","h","help"
 ) or die Usage(1);
+
+if ( $getHexConverionImplemtation ) {
+	print "Data::HexConverter::binary_to_hex_impl-> " . binary_to_hex_impl . "\n";
+	print "Data::HexConverter::hex_to_binary_impl-> " . hex_to_binary_impl . "\n";
+	exit(0);
+}
 
 for my $table ( keys %bincol ) {
 	my @bincols = split(/\,/,$bincol{$table});
@@ -282,6 +290,9 @@ usage:
 
    --record-delimiter   string that delimits end of record
                         default: "\n"
+
+   --show-simd          show which Intel Extended Instruction set implementation of
+                        Data::HexConverter is being used
 
    dunldr --database orcl --username system --password manager \
      --owner scott --directory scott.tables \
