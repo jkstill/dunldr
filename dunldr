@@ -18,6 +18,7 @@ use DBI;
 use File::Path;
 use IO::File;
 use Data::Dumper;
+use Data::HexConverter;
 
 use Getopt::Long;
 
@@ -61,7 +62,6 @@ for my $table ( keys %bincol ) {
 	my @bincols = split(/\,/,$bincol{$table});
 	$hexcols{uc($table)} = \@bincols;
 }
-
 
 if ( $recordPrefix eq 'NA' ) { $recordPrefix = ''; }
 if ( $recordSuffix eq 'NA' ) { $recordSuffix = ''; }
@@ -127,6 +127,7 @@ our $dbh = DBI->connect(
 die "Connect to  $db failed \n" unless $dbh;
 
 $dbh->{LongReadLen} = $optctl{longlen};
+$dbh->{RowCacheSize} = 100;
 
 # set Oracle NLS date format
 if ( $optctl{dateformat} ) {
@@ -144,7 +145,6 @@ my $tableHash = new Tables($dbh, \%optctl, $dumpfileSuffix);
 autoflush STDOUT 1;
 
 my $sth;
-
 
 # take a dump
 for my $table (  keys %{$tableHash} ){
@@ -200,7 +200,9 @@ for my $table (  keys %{$tableHash} ){
 		# change column to hex if specified as binary via -bincol arg
 		if ( exists $hexcols{$table} ) {
 			for my $hexdumpcol ( @{$hexcols{$table}} ) {
-				$ary->[$colOrder{uc($hexdumpcol)}] = uc(unpack("H*",$ary->[$colOrder{uc($hexdumpcol)}]));
+				#$ary->[$colOrder{uc($hexdumpcol)}] = uc(unpack("H*",$ary->[$colOrder{uc($hexdumpcol)}]));
+				# use Data::HexConverter module to do the conversion as it is much faster
+				$ary->[$colOrder{uc($hexdumpcol)}] = uc( binary_to_hex(\$ary->[$colOrder{uc($hexdumpcol)}] ));
 			}
 		}
 		print DUMP  $recordPrefix . join(qq{$fieldDelimiter},@{$ary}) . $recordSuffix . qq{$recordDelimiter};
@@ -209,7 +211,6 @@ for my $table (  keys %{$tableHash} ){
 	use warnings;
 	close DUMP;
 }
-
 
 #$sth->finish;
 $dbh->disconnect;
