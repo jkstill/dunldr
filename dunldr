@@ -18,8 +18,22 @@ use DBI;
 use File::Path;
 use IO::File;
 use Data::Dumper;
-
+use Data::HexConverter;
 use Getopt::Long;
+
+use Module::Load::Conditional qw(check_install);
+use Module::Load;
+
+my $hexModule = 'Data::HexConverter';
+my $useHexConverter = 0;
+my $hexConverterInstalled = check_install(module => $hexModule);
+
+if (defined $hexConverterInstalled) {
+	#print "Version: " . ($hexConverterInstalled->{version} // 'unknown') . "\n";
+	#print "Path: " . $hexConverterInstalled->{file} . "\n";
+	$useHexConverter = 1;
+	autoload Data::HexConverter;
+}
 
 my %bincol = ();
 my %hexcols = ();
@@ -30,6 +44,8 @@ my $fieldDelimiter='","';
 my $recordDelimiter="\n";
 my $loadAsCLOB = 0;
 my $loadDirect = 0;
+my $getHexConverionImplemtation = 0;
+my $disableHexConverter = 0;
 
 my %optctl = ();
 Getopt::Long::GetOptions( \%optctl, 
@@ -44,6 +60,8 @@ Getopt::Long::GetOptions( \%optctl,
 		"longlen=i",
 		"rowlimit=i",
 		"table=s@",
+		"show-simd!", \$getHexConverionImplemtation,
+		"disable-hexconverter!", \$disableHexConverter,
 		"bincol=s" => \%bincol,
 		"load-as-clob!", \$loadAsCLOB,
 		"load-direct!", \$loadDirect,
@@ -57,11 +75,23 @@ Getopt::Long::GetOptions( \%optctl,
 		"z","h","help"
 ) or die Usage(1);
 
+warn "Data::HexConverter is not installed - using unpack() for binary to hex conversion\n" unless $useHexConverter;
+
+if ( $disableHexConverter ) {
+	$useHexConverter = 0;
+	warn "Data::HexConverter use disabled via --disable-hexconverter option\n";
+}
+
+if ( $useHexConverter && $getHexConverionImplemtation ) {
+	print "Data::HexConverter::binary_to_hex_impl-> " . binary_to_hex_impl . "\n";
+	print "Data::HexConverter::hex_to_binary_impl-> " . hex_to_binary_impl . "\n";
+	exit(0);
+}
+
 for my $table ( keys %bincol ) {
 	my @bincols = split(/\,/,$bincol{$table});
 	$hexcols{uc($table)} = \@bincols;
 }
-
 
 if ( $recordPrefix eq 'NA' ) { $recordPrefix = ''; }
 if ( $recordSuffix eq 'NA' ) { $recordSuffix = ''; }
@@ -127,6 +157,7 @@ our $dbh = DBI->connect(
 die "Connect to  $db failed \n" unless $dbh;
 
 $dbh->{LongReadLen} = $optctl{longlen};
+$dbh->{RowCacheSize} = 100;
 
 # set Oracle NLS date format
 if ( $optctl{dateformat} ) {
@@ -144,7 +175,6 @@ my $tableHash = new Tables($dbh, \%optctl, $dumpfileSuffix);
 autoflush STDOUT 1;
 
 my $sth;
-
 
 # take a dump
 for my $table (  keys %{$tableHash} ){
@@ -200,7 +230,12 @@ for my $table (  keys %{$tableHash} ){
 		# change column to hex if specified as binary via -bincol arg
 		if ( exists $hexcols{$table} ) {
 			for my $hexdumpcol ( @{$hexcols{$table}} ) {
-				$ary->[$colOrder{uc($hexdumpcol)}] = uc(unpack("H*",$ary->[$colOrder{uc($hexdumpcol)}]));
+				# use Data::HexConverter module to do the conversion as it is much faster
+				if ( $useHexConverter ) {
+					$ary->[$colOrder{uc($hexdumpcol)}] = uc( binary_to_hex(\$ary->[$colOrder{uc($hexdumpcol)}] ));
+				} else {
+					$ary->[$colOrder{uc($hexdumpcol)}] = uc(unpack("H*",$ary->[$colOrder{uc($hexdumpcol)}]));
+				}
 			}
 		}
 		print DUMP  $recordPrefix . join(qq{$fieldDelimiter},@{$ary}) . $recordSuffix . qq{$recordDelimiter};
@@ -209,7 +244,6 @@ for my $table (  keys %{$tableHash} ){
 	use warnings;
 	close DUMP;
 }
-
 
 #$sth->finish;
 $dbh->disconnect;
@@ -281,6 +315,13 @@ usage:
 
    --record-delimiter   string that delimits end of record
                         default: "\n"
+
+   --show-simd          show which Intel Extended Instruction set implementation of
+                        Data::HexConverter is being used
+
+   --disable-hexconverter
+                        disable use of Data::HexConverter module even if installed
+                        used for testing
 
    dunldr --database orcl --username system --password manager \
      --owner scott --directory scott.tables \
