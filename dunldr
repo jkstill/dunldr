@@ -19,8 +19,6 @@ use File::Path;
 use IO::File;
 use Carp;
 use Data::Dumper;
-# this is a bug.  Data::HexConverter must be loaded dynamically
-use Data::HexConverter;
 use Getopt::Long;
 
 use Module::Load::Conditional qw(check_install);
