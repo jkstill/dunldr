@@ -17,7 +17,9 @@ use FileHandle;
 use DBI;
 use File::Path;
 use IO::File;
+use Carp;
 use Data::Dumper;
+# this is a bug.  Data::HexConverter must be loaded dynamically
 use Data::HexConverter;
 use Getopt::Long;
 
@@ -46,41 +48,57 @@ my $loadAsCLOB = 0;
 my $loadDirect = 0;
 my $getHexConverionImplemtation = 0;
 my $disableHexConverter = 0;
+
+# for sqltrace
 my $sqlTrace = 0;
 my $traceBindValues = 0;
 my $traceWaits = 1;
 my $traceId = '';
 
+# for scp to retrive trace files
+my $remoteUser = '';
+my $remoteHost = '';
+my $remotePath = '';
+my $localPath  = '';
+my $keyFile = '';
+
 my %optctl = ();
 Getopt::Long::GetOptions( \%optctl, 
-		"database=s",
-		"username=s",
-		"password=s",
-		"owner=s",
-		"directory=s",
-		"dateformat=s",
-		"header!",
-		"schemadump!",
-		"longlen=i",
-		"rowlimit=i",
-		"table=s@",
-		"show-simd!", \$getHexConverionImplemtation,
-		"disable-hexconverter!", \$disableHexConverter,
-		"bincol=s" => \%bincol,
-		"load-as-clob!", \$loadAsCLOB,
-		"load-direct!", \$loadDirect,
-		"file-suffix=s" => \$dumpfileSuffix,
-		"record-prefix=s" => \$recordPrefix,
-		"record-suffix=s" => \$recordSuffix,
-		"field-delimiter=s" => \$fieldDelimiter,
-		"record-delimiter=s" => \$recordDelimiter,
-		"sql-trace!"   => \$sqlTrace,
-   	"trace-waits!" => \$traceWaits,
-   	"trace-binds!" => \$traceBindValues,
-   	"trace-id=s"   => \$traceId,
-		"sysdba!",
-		"sysoper!",
-		"z","h","help"
+	"database=s",
+	"username=s",
+	"password=s",
+	"owner=s",
+	"directory=s",
+	"dateformat=s",
+	"header!",
+	"schemadump!",
+	"longlen=i",
+	"rowlimit=i",
+	"table=s@",
+	"show-simd!", \$getHexConverionImplemtation,
+	"disable-hexconverter!", \$disableHexConverter,
+	"bincol=s" => \%bincol,
+	"load-as-clob!", \$loadAsCLOB,
+	"load-direct!", \$loadDirect,
+	"file-suffix=s" => \$dumpfileSuffix,
+	"record-prefix=s" => \$recordPrefix,
+	"record-suffix=s" => \$recordSuffix,
+	"field-delimiter=s" => \$fieldDelimiter,
+	"record-delimiter=s" => \$recordDelimiter,
+	# for sql trace
+	"sql-trace!"   => \$sqlTrace,
+	"trace-waits!" => \$traceWaits,
+	"trace-binds!" => \$traceBindValues,
+	"trace-id=s"   => \$traceId,
+	# for scp if needed for trace file
+   'remote-user=s' => \$remoteUser,
+   'remote-host=s' => \$remoteHost,
+   'local-path=s'  => \$localPath,
+   'key-file=s'    => \$keyFile,
+
+	"sysdba!",
+	"sysoper!",
+	"z","h","help"
 ) or die Usage(1);
 
 warn "Data::HexConverter is not installed - using unpack() for binary to hex conversion\n" unless $useHexConverter;
@@ -91,8 +109,8 @@ if ( $disableHexConverter ) {
 }
 
 if ( $useHexConverter && $getHexConverionImplemtation ) {
-	print "Data::HexConverter::binary_to_hex_impl-> " . binary_to_hex_impl . "\n";
-	print "Data::HexConverter::hex_to_binary_impl-> " . hex_to_binary_impl . "\n";
+	print "Data::HexConverter::binary_to_hex_impl-> " . binary_to_hex_impl() . "\n";
+	print "Data::HexConverter::hex_to_binary_impl-> " . hex_to_binary_impl() . "\n";
 	exit(0);
 }
 
@@ -268,12 +286,29 @@ for my $table (  keys %{$tableHash} ){
 	close DUMP;
 }
 
-
 if ( $sqlTrace ) {
    $sqltraceObj->stop_trace();
-   my $trace_file = $sqltraceObj->get_trace_file_name();
+   my $traceFile = $sqltraceObj->get_trace_file_name();
    warn "SQL Trace stopped\n";
-   warn "Trace file: $trace_file\n";
+   warn "Trace file: $traceFile\n";
+	if ( $remoteUser && $remoteHost && $traceFile && $localPath ) {
+
+		my $scp = Net::SCP->new();
+
+		eval {
+   		$scp->scp_get($remoteUser, $remoteHost, $traceFile, $localPath, $keyFile);
+   		print "File copied successfully from ${remoteUser}\@${remoteHost}:${remotePath} to ${localPath}\n";
+		};
+
+		if ($@) {
+			 carp "\nError during scp_get:\n $@\n\n";
+		}
+
+	} else {
+		warn "To retrieve trace file via scp, use the following options:\n";
+		warn " --remote-user <user> --remote-host <host> \n";
+		warn " --remote-path <remote trace file path> --local-path <local path>\n";
+	}
 }
 
 #$sth->finish;
@@ -354,11 +389,17 @@ usage:
                         disable use of Data::HexConverter module even if installed
                         used for testing
 
+  SQL TRACE OPTIONS:
    --sql-trace          enable SQL trace for the session
    --trace-waits        enable wait event tracing (default)
    --trace-binds        enable bind value tracing
    --trace-id           set trace file identifier (default '')
 
+  SCP OPTIONS (to retrieve trace file if needed):
+   --remote-user USER
+   --remote-host HOST
+   --local-path /path/to/local/destination 
+   [--key-file /path/to/private/key]
 
    dunldr --database orcl --username system --password manager \
      --owner scott --directory scott.tables \
@@ -613,7 +654,7 @@ sub new {
 		croak "DBI::Oracle::SQLTrace->new: DBH argument is required\n";
 	}
 
-	print "DBI::Oracle::SQLTrace self: ", Dumper($self) ; #if $args{DEBUG};
+	#print "DBI::Oracle::SQLTrace self: ", Dumper($self) ; #if $args{DEBUG};
 
 	# one way to create a dispatch table in an object
 	# this is probably the simplest and least flexible method
@@ -631,9 +672,9 @@ sub get_trace_file_name {
 	#print Dumper($self);
 	my $sth = $dbh->prepare($SQL{GET_TRACE_FILE_NAME});
 	$sth->execute;
-	my ($trace_file) = $sth->fetchrow_array;
+	my ($traceFile) = $sth->fetchrow_array;
 	$sth->finish;
-	return $trace_file;
+	return $traceFile;
 }
 
 sub set_trace_id {
@@ -674,8 +715,83 @@ sub cleanup_and_croak {
 	croak $msg;
 }
 1;
-
 }
 
+BEGIN {
+package Net::SCP;
+use Carp;
+use strict;
+use warnings;
+
+use Data::Dumper;
+$Data::Dumper::Indent=2; # 1= more compact indentation, 2=default
+$Data::Dumper::Sortkeys=1; # sorted hash keys handier for consistency
+$Data::Dumper::Maxrecurse=3;
+$Data::Dumper::Maxdepth=3;
+$Data::Dumper::Terse=0;
+
+use Exporter qw(import);
+our $VERSION=0.1;
+our @EXPORT = qw(scp_get);
+our @ISA=qw(Exporter);
+
+# locate the scp binary
+sub locate_binary {
+	my $self=shift;
+	my $filename=shift;
+	my $whichBinary = '';;
+
+	# Get the PATH environment variable
+	my $path = $ENV{PATH};
+
+	my @pathDirs = split /:/, $path; # Use ';' for Windows
+
+	foreach my $dir (@pathDirs) {
+		my $fullPath = "$dir/$filename";
+
+		# Check if the file exists at this full path
+		if (-e $fullPath) {
+			$whichBinary = $fullPath;
+			last; # Stop searching once found
+		}
+	}
+
+	unless ($whichBinary) {
+    	print "File '$filename' not found in PATH.\n";
+		croak "locate_binary: $filename not found in PATH";
+	}
+
+	$self->{${filename}.'_binary'}=$whichBinary;
+
+	return $self;
+}
+
+sub new {
+  my $class=shift;
+  my $self={};
+  $self=locate_binary($self,'scp');
+  bless $self, $class;
+  return $self;
+}
+
+sub scp_get {
+  my ($self, $remoteUser, $remoteHost, $remotePath, $localPath,$keyFile)=@_;
+  croak "scp_get: missing arguments" unless defined $remoteUser && defined $remoteHost && defined $remotePath && defined $localPath;
+
+  my $scpCmd="$self->{scp_binary} ";
+  $scpCmd .= " -B "; # batch mode, no password prompts
+  $scpCmd .= " -i ${keyFile} " if defined $keyFile && $keyFile ne '';
+  $scpCmd .= " ${remoteUser}\@${remoteHost}:${remotePath} ${localPath}";
+  print "Executing: $scpCmd\n";
+  my $result=system($scpCmd);
+  if ($result != 0) {
+	 croak "scp_get: scp command failed with exit code ".($result >> 8);
+  }
+  return 1;
+}
+1;
+}
+
+1;
 
 
